@@ -7,12 +7,6 @@
     ([~> value (fn args ...) rest ...] (~> (fn value args ...) rest ...))
     ([~> value fn rest ...] (~> (fn value) rest ...))))
 
-(define example-file (open-input-file "example.gmi"))
-(define lines (sequence->stream (in-lines example-file)))
-
-(define header (stream-first lines))
-(println header)
-
 (define (between value min max)
   (and (>= value min)
        (<= value max)))
@@ -71,5 +65,11 @@
                     links)])
     (values preformat? links line-type)))
        
+(define example-file (open-input-file "example.gmi"))
+(define lines-seq (sequence->stream (in-lines example-file)))
 
-(parse-header "20 text/gemini")
+(define header (stream-first lines-seq))
+(define lines (stream-rest lines-seq))
+
+(define parsed-header (parse-header "20 text/gemini"))
+
