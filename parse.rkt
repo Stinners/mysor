@@ -7,6 +7,18 @@
     ([~> value (fn args ...) rest ...] (~> (fn value args ...) rest ...))
     ([~> value fn rest ...] (~> (fn value) rest ...))))
 
+(define-syntax ~>>
+  (syntax-rules () 
+    ([~>> value] value)
+    ([~>> value ('λ def ...) rest ...] (~>> ((λ def ...) value) rest ...))
+    ([~>> value (fn args ...) rest ...] (~>> (fn args ... value) rest ...))
+    ([~>> value fn rest ...] (~>> (fn value) rest ...))))
+    
+(define (parse-link line)
+  (-> line 
+      (substring 2)
+      (string-trim #:repeat? #t)))
+
 (define (between value min max)
   (and (>= value min)
        (<= value max)))
@@ -24,6 +36,21 @@
   (gmi-header (substring header 0 2)
               (substring header 3)))
 
+(struct gmi-line (type text))
+
+(struct parser-state (preformat? links lines))
+
+(define (switch-preformat preformat? s)
+  (if preformat (struct-copy parser-state s [preformat? (not (parser-state-preformat? s))]
+                 s)))
+
+(define (add-link line s)
+  (let* ([line-type (gmi-line-type line)]
+         [text (parse-link (gmi-text line))]))
+  (if (equal? (gmi-line-type line) 'link
+       (struct-copy parser-state s [links (cons (gmi-line-text) (parser-state-links s))]
+           s))))
+
 (define (nth-char n line)
   (if (< n (string-length line))
       (string-ref line 0)
@@ -36,13 +63,8 @@
         [(> substr-len str-len)                    #f]
         [(equal? str (substring substr 0 str-len)) #t] 
         [else                                      #f])))
-    
-(define (parse-link line)
-  (-> line 
-      (substring 2)
-      (string-trim #:repeat? #t)))
 
-(define (match-line line)
+(define (get-line-type line)
   (let ([first-char (nth-char 0 line)])
     (match first-char
       [#\# 'header]
@@ -52,18 +74,27 @@
                'link 
                'text)]
       [#\` (if (starts-with "```" line)
-               'preformat
+               'preformat-switch
                'text)]
       [_ 'text])))
-  
-(define (parse-line preformat? links line)
-  (let* ([first-char (substring line 0 1)]
-         [line-type (match-line line)] 
-         [preformat? (xor preformat? (equal? line-type 'preformat))]
-         [links (if (equal? line-type 'link)
-                    (-> line (parse-link) (cons links))
-                    links)])
-    (values preformat? links line-type)))
+
+(define (parse-lines preformat? state)
+  (match lines
+    [empty (values links parsed-lines)]
+    [(list line rest ...)
+     (let* ([raw-line-type (get-line-type line)]
+            [preformat? (xor preformat? (equal? raw-line-type 'preformat-switch))]
+            [line-type (if preformat? 
+                           'preformat 
+                           raw-line-type)]
+            [new-link (if (equal? line-type 'link)
+                          (parse-link line)
+                          #f)]
+            [new-line (gmi-line line-type line)])
+        (~>> state
+             (switch-preformat preformat?)
+             (add-link)
+          ()))]))
        
 (define example-file (open-input-file "example.gmi"))
 (define lines-seq (sequence->stream (in-lines example-file)))
