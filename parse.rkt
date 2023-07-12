@@ -1,27 +1,16 @@
 #lang racket 
 
-(define-syntax ~>
-  (syntax-rules () 
-    ([~> value] value)
-    ([~> value ('λ def ...) rest ...] (~> ((λ def ...) value) rest ...))
-    ([~> value (fn args ...) rest ...] (~> (fn value args ...) rest ...))
-    ([~> value fn rest ...] (~> (fn value) rest ...))))
+(require "util.rkt")
 
-(define-syntax ~>>
-  (syntax-rules () 
-    ([~>> value] value)
-    ([~>> value ('λ def ...) rest ...] (~>> ((λ def ...) value) rest ...))
-    ([~>> value (fn args ...) rest ...] (~>> (fn args ... value) rest ...))
-    ([~>> value fn rest ...] (~>> (fn value) rest ...))))
-    
-(define (parse-link line)
-  (-> line 
-      (substring 2)
-      (string-trim #:repeat? #t)))
+;; Helpers 
 
 (define (between value min max)
   (and (>= value min)
        (<= value max)))
+
+(define (parse-header header)
+  (gmi-header (substring header 0 2)
+              (substring header 3)))
 
 (struct gmi-header (code status)
   #:guard (λ (code-str status name)
@@ -32,75 +21,78 @@
                 (error "Status cannot be longer than 1024 characters"))
               (values code status))))
 
-(define (parse-header header)
-  (gmi-header (substring header 0 2)
-              (substring header 3)))
+;; Structs
 
-(struct gmi-line (type text))
+(struct gmi-text (text))
+(struct gmi-link (text url))
+(struct gmi-toggle (alt-text))
+(struct gmi-pre (text))
+(struct gmi-heading (text level))
+(struct gmi-list (text))
+(struct gmi-quote (text))
 
-(struct parser-state (preformat? links lines))
+;; Parsing 
 
-(define (switch-preformat preformat? s)
-  (if preformat (struct-copy parser-state s [preformat? (not (parser-state-preformat? s))]
-                 s)))
+(struct parser-state (preformat? lines))
 
-(define (add-link line s)
-  (let* ([line-type (gmi-line-type line)]
-         [text (parse-link (gmi-text line))]))
-  (if (equal? (gmi-line-type line) 'link
-       (struct-copy parser-state s [links (cons (gmi-line-text) (parser-state-links s))]
-           s))))
+(define (update-lines state func)
+  (struct-copy parser-state state
+    [lines (func (parser-state-lines line))]))
 
-(define (nth-char n line)
-  (if (< n (string-length line))
-      (string-ref line 0)
-      #\nul))
 
-(define (starts-with substr str)
-  (let ([substr-len (string-length substring)]
-        [str-len (string-length str)])
-      (cond 
-        [(> substr-len str-len)                    #f]
-        [(equal? str (substring substr 0 str-len)) #t] 
-        [else                                      #f])))
+(define (toggle-preformat line s)
+  (if (string-prefix? "```" line)
+    (struct-copy parser-state s [preformat? (not parser-state-preformat? s)])
+    s))
 
-(define (get-line-type line)
-  (let ([first-char (nth-char 0 line)])
-    (match first-char
-      [#\# 'header]
-      [#\* 'list]
-      [#\> 'quote]
-      [#\= (if (equal? (#\> (nth-char 2 line)))
-               'link 
-               'text)]
-      [#\` (if (starts-with "```" line)
-               'preformat-switch
-               'text)]
-      [_ 'text])))
+;; Make Lines
 
-(define (parse-lines preformat? state)
-  (match lines
-    [empty (values links parsed-lines)]
-    [(list line rest ...)
-     (let* ([raw-line-type (get-line-type line)]
-            [preformat? (xor preformat? (equal? raw-line-type 'preformat-switch))]
-            [line-type (if preformat? 
-                           'preformat 
-                           raw-line-type)]
-            [new-link (if (equal? line-type 'link)
-                          (parse-link line)
-                          #f)]
-            [new-line (gmi-line line-type line)])
-        (~>> state
-             (switch-preformat preformat?)
-             (add-link)
-          ()))]))
-       
-(define example-file (open-input-file "example.gmi"))
-(define lines-seq (sequence->stream (in-lines example-file)))
+(define (trim str) (string-trim str #:repeat? #t))
 
-(define header (stream-first lines-seq))
-(define lines (stream-rest lines-seq))
+(define make-text gmi-text)
+(define make-pre gmi-pre)
 
-(define parsed-header (parse-header "20 text/gemini"))
+(define (make-link line)
+  (let* ([parts (-> line 
+                    (substring 2) 
+                    trim
+                    (string-split #:repeat? #t #:trim #t))]
+         [url (first parts)]
+         [friendly (-> parts cdr string-join)])
+    (gmi-link friendly url)))
+
+(define (make-toggle line)
+  (-> line (substring 3) trim (gmi-toggle)))
+
+(define (make-quote line)
+  (-> line (substring 2) trim (gmi-quote)))
+
+(define (make-lst line)
+  (-> line (substring 2) trim (gmi-list)))
+
+(define (make-heading line)
+  (let* [trimmed (string-trim line "#" #:left? #t #:right? #f #:repeat? #t)]
+        [level (- (string-length line) (string-length trimmed))]
+    (gmi-heading (trim trimmed) level)))
+  
+;; High Level Functions
+
+(define (make-line line)
+  (cond 
+    [(string-prefix? "=>"  line) (make-line line)]
+    [(string-prefix? "```" line) (make-toggle line)]
+    [(string-prefix? "#"   line) (make-header line)]
+    [(string-prefix? "* "  line) (make-lst line)]
+    [(string-prefix? "> "  line) (make-quote line)]
+    [else                        (make-text line)]))
+
+(define (parse-line state line)
+  (let* ([state      (toggle-preformat line)]
+         [preformat? (parser-state-preformat? state)]
+         [line (if preformat?
+                 (make-pre line)
+                 (make-line line))])
+    (update-lines state (λ (lines) (cons line lines)))))
+         
+(define parse text) 
 
