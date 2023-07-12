@@ -37,7 +37,7 @@
 
 (define (update-lines state func)
   (struct-copy parser-state state
-    [lines (func (parser-state-lines line))]))
+    [lines (func (parser-state-lines state))]))
 
 
 (define (toggle-preformat line s)
@@ -71,8 +71,8 @@
   (-> line (substring 2) trim (gmi-list)))
 
 (define (make-heading line)
-  (let* [trimmed (string-trim line "#" #:left? #t #:right? #f #:repeat? #t)]
-        [level (- (string-length line) (string-length trimmed))]
+  (let* ([trimmed (string-trim line "#" #:left? #t #:right? #f #:repeat? #t)]
+         [level (- (string-length line) (string-length trimmed))])
     (gmi-heading (trim trimmed) level)))
   
 ;; High Level Functions
@@ -81,7 +81,7 @@
   (cond 
     [(string-prefix? "=>"  line) (make-line line)]
     [(string-prefix? "```" line) (make-toggle line)]
-    [(string-prefix? "#"   line) (make-header line)]
+    [(string-prefix? "#"   line) (make-heading line)]
     [(string-prefix? "* "  line) (make-lst line)]
     [(string-prefix? "> "  line) (make-quote line)]
     [else                        (make-text line)]))
@@ -94,5 +94,4 @@
                  (make-line line))])
     (update-lines state (λ (lines) (cons line lines)))))
          
-(define parse text) 
 
